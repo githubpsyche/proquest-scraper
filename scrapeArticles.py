@@ -24,6 +24,7 @@ import itertools
 import re
 from tqdm import tqdm
 from dateutil import parser
+from selenium import webdriver
 from scrapy.crawler import CrawlerProcess
 from scrapy.spiders import CrawlSpider, Rule
 from scrapy.item import Item, Field
@@ -34,6 +35,31 @@ import logging
 from scrapy.utils.response import open_in_browser
 # -
 
+# ## Authentication Parameters
+# Each university will have a slightly different method for authenticating users before accessing ProQUEST. Our generalized approach to the problem assumes you'll start at some login page, need to enter a username and password, and upon submission will eventually be redirected to the ProQuest homepage. 
+#
+# So to use this notebook, you just have to specify the URL, xpaths, and credentials unique to your situation.
+
+# +
+# url for your login page
+auth_url = 'http://www.library.vanderbilt.edu/eres?id=1349'
+
+# your credentials - a username and password
+username = 'mynameis'
+password = 'slimshady'
+
+# xpath locating elements where you'll input username/password, submit credentials, and then confirm successful authentication
+usernamepath = "//input[@id='username']"
+passwordpath = "//input[@id='password']"
+confirmpath = "//*[@title='ProQuest']"
+
+# sometimes instead of clicking confirm button you'll want to call a function instead (eg the function triggered when the button is pressed)
+# specify the javascript you want to call here; it'll be attempted until it succeeds
+# otherwise just specify in submitpath the xpath of the button you want clicked
+submitpath =  None
+submitscript = 'postOk()'
+# -
+
 # ## Search Space
 # Here we define the space across ProQUEST for our news articles search. For now, we'll just assume only a single search `query` is a parameter varied from search to search.
 
@@ -42,7 +68,7 @@ from scrapy.utils.response import open_in_browser
 topic = 'biden'
 
 # what will be searched
-query = 'biden' 
+search_query = 'biden' 
 
 # must specify a date range (d0 to d1) so we can ensure search completeness later on. if not interested in constraining dates, just include every relevant date!
 # articles published on d0 up to but excluding d1 will be collected
@@ -123,6 +149,37 @@ class articleSpider(scrapy.Spider):
                       'ITEM_PIPELINES': {'__main__.JsonWriterPipeline': 1},
                       'LOG_LEVEL': 'WARNING'}
     
+    # first we obtain authenticated session cookie(s) using selenium
+    driver = webdriver.Firefox()
+    driver.get(auth_url)
+
+    # username
+    driver.implicitly_wait(10) # in general this line waits 10 seconds for the next driver operation to succeed
+    driver.find_element_by_xpath(usernamepath).send_keys(username)
+
+    # password
+    driver.implicitly_wait(10)
+    driver.find_element_by_xpath(passwordpath).send_keys(password)
+
+    # submit - either a button or a function depending on auth parameters
+    if submitpath:
+        driver.implicitly_wait(10)
+        driver.find_element_by_xpath(submitpath).click()
+    else:
+        while True:
+            try:
+                driver.execute_script(submitscript)
+                break
+            except:
+                pass
+
+    # confirm authentication
+    driver.implicitly_wait(10)
+    driver.find_element_by_xpath(confirmpath).click()
+
+    cookies = {i['name']: i['value'] for i in driver.get_cookies()}
+    driver.close()
+    
     def start_requests(self):
         
         # if no results exist at all in existing data set, search is a-go as before;
@@ -139,8 +196,8 @@ class articleSpider(scrapy.Spider):
             missing = 'All'
         
         yield scrapy.Request('https://search.proquest.com/advanced.showresultpageoptions?site=news',
-                                 callback=self.startform, dont_filter=True, 
-                                 meta={'originalquery': query, 'query': query, 'databaseindex': 0,
+                                 callback=self.startform, dont_filter=True, cookies=self.cookies,
+                                 meta={'originalquery': search_query, 'query': search_query, 'databaseindex': 0,
                                        'originalstart': d0, 'originalend': d1, 'line': '',
                                        'querystart': d0, 'queryend': d1, 'parents': 0, 'missing': missing}
                             )
@@ -152,12 +209,14 @@ class articleSpider(scrapy.Spider):
 # +
 # starts the form that must be filled out to search w/ our query
 def startform(self, response):
+    
     # start the search form
     yield scrapy.Request('https://search.proquest.com/news/advanced?accountid=13314',
                          callback=self.query, dont_filter=True, meta=response.meta)
 
 # fills out form and initiates search
 def query(self, response):
+    
     # fill it out and search
     yield scrapy.FormRequest.from_response(response, dont_filter=True, formid='searchForm',
                                            formdata={'queryTermField': response.meta['query'],'fullTextLimit':'on',
@@ -175,7 +234,8 @@ def query(self, response):
 
 # sets up inspection of each page of results generated by search
 def parsePages(self, response):
-
+    open_in_browser(response)
+    
     sel = Selector(response)
     
     # sometimes proquest will expire the current session or refuse to fulfill a query
@@ -294,6 +354,3 @@ process = CrawlerProcess({'USER_AGENT': 'Mozilla/4.0 (compatible; MSIE 7.0; Wind
 
 process.crawl(articleSpider)
 process.start()
-# -
-
-
