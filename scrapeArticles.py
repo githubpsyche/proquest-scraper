@@ -68,7 +68,7 @@ submitscript = 'postOk()'
 topic = 'biden'
 
 # must specify a date range (d0 to d1) so we can ensure search completeness later on. if not interested in constraining dates, just include every relevant date!
-# articles published on d0 up to but excluding d1 will be collected
+# articles published on d0 up to and including d1 will be collected
 d0 = parser.parse('May 1, 2020')
 d1 = parser.parse('May 2, 2020')
 
