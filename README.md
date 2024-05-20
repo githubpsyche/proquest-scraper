@@ -1,2 +1,2 @@
-# auto-oppo
-automating opposition research to improve public accountability
+# proquest-scraper
+ensemble of scrapy and selenium to scrape from proquest efficiently
